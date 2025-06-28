@@ -1,0 +1,52 @@
+#voyage-ai-tutor-root {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 350px;
+  z-index: 9999;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  font-family: Arial, sans-serif;
+  padding: 15px;
+  box-sizing: border-box;
+}
+
+#voyage-ai-tutor-root h1 {
+  font-size: 1.2em;
+  margin-top: 0;
+}
+
+#voyage-ai-tutor-root textarea {
+  width: 100%;
+  height: 100px;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+#voyage-ai-tutor-root button {
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  border-radius: 4px;
+}
+
+#voyage-ai-tutor-root button:hover {
+  background-color: #0056b3;
+}
+
+#voyage-ai-tutor-root button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+#voyage-ai-tutor-root audio {
+  width: 100%;
+  margin-top: 15px;
+} 
