@@ -5,12 +5,17 @@ declare const chrome: {
     runtime: {
         getURL: (path: string) => string;
     };
+    tabs: {
+        captureVisibleTab: (windowId?: number, options?: any) => Promise<string>;
+        query: (queryInfo: any) => Promise<any[]>;
+    };
 };
 
 const Popup = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [lastScreenshot, setLastScreenshot] = useState<string | null>(null);
 
     const ws = useRef<WebSocket | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -27,6 +32,48 @@ const Popup = () => {
             }
         };
     }, []);
+
+    // Capture screenshot of current tab
+    const captureScreenshot = async (): Promise<string | null> => {
+        try {
+            console.log('Capturing screenshot...');
+            
+            // Capture the visible tab
+            const dataUrl = await chrome.tabs.captureVisibleTab(undefined, {
+                format: 'png',
+                quality: 90
+            });
+            
+            console.log('Screenshot captured successfully');
+            setLastScreenshot(dataUrl);
+            return dataUrl;
+            
+        } catch (error) {
+            console.error('Error capturing screenshot:', error);
+            setError('Failed to capture screenshot: ' + (error as Error).message);
+            return null;
+        }
+    };
+
+    // Convert data URL to base64 data for Gemini
+    const dataUrlToBase64 = (dataUrl: string): string => {
+        // Remove the data:image/png;base64, prefix
+        return dataUrl.split(',')[1];
+    };
+
+    // Send screenshot to server along with audio context
+    const sendScreenshotToServer = (screenshotDataUrl: string) => {
+        if (ws.current?.readyState === WebSocket.OPEN) {
+            const message = {
+                type: 'screenshot',
+                data: dataUrlToBase64(screenshotDataUrl),
+                mimeType: 'image/png'
+            };
+            
+            console.log('Sending screenshot to server...');
+            ws.current.send(JSON.stringify(message));
+        }
+    };
 
     // Improved audio buffer playback with proper browser resampling
     const playAudioBuffer = async (audioData: Float32Array) => {
@@ -163,7 +210,12 @@ const Popup = () => {
                         const uint8Array = new Uint8Array(pcmData.buffer);
                         const base64Data = btoa(String.fromCharCode(...uint8Array));
                         
-                        ws.current.send(base64Data);
+                        const message = {
+                            type: 'audio',
+                            data: base64Data
+                        };
+                        
+                        ws.current.send(JSON.stringify(message));
                     }
                 };
                 
@@ -194,7 +246,12 @@ const Popup = () => {
                         const uint8Array = new Uint8Array(pcmData.buffer);
                         const base64Data = btoa(String.fromCharCode(...uint8Array));
                         
-                        ws.current.send(base64Data);
+                        const message = {
+                            type: 'audio',
+                            data: base64Data
+                        };
+                        
+                        ws.current.send(JSON.stringify(message));
                     }
                 };
                 
@@ -278,14 +335,77 @@ const Popup = () => {
         }
     };
 
+    const handleScreenshotAndSpeak = async () => {
+        if (!isRecording) {
+            setError('Please start listening first, then take a screenshot');
+            return;
+        }
+
+        const screenshot = await captureScreenshot();
+        if (screenshot) {
+            sendScreenshotToServer(screenshot);
+        }
+    };
+
     return (
-        <div>
+        <div style={{ padding: '20px', minWidth: '300px' }}>
             <h1>Voyage AI Tutor</h1>
-            <p>Click the button and start speaking.</p>
-            <button onClick={handleToggleRecording} disabled={isLoading}>
-                {isLoading ? 'Connecting...' : (isRecording ? 'Stop Listening' : 'Start Listening')}
-            </button>
-            {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+            <p>Click "Start Listening" and speak your questions. Use "Take Screenshot" to share what you're seeing for better help.</p>
+            
+            <div style={{ marginBottom: '15px' }}>
+                <button 
+                    onClick={handleToggleRecording} 
+                    disabled={isLoading}
+                    style={{
+                        padding: '10px 20px',
+                        marginRight: '10px',
+                        backgroundColor: isRecording ? '#dc3545' : '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: isLoading ? 'not-allowed' : 'pointer'
+                    }}
+                >
+                    {isLoading ? 'Connecting...' : (isRecording ? 'Stop Listening' : 'Start Listening')}
+                </button>
+
+                <button 
+                    onClick={handleScreenshotAndSpeak}
+                    disabled={!isRecording || isLoading}
+                    style={{
+                        padding: '10px 20px',
+                        backgroundColor: isRecording ? '#007bff' : '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: isRecording && !isLoading ? 'pointer' : 'not-allowed'
+                    }}
+                >
+                    📸 Take Screenshot
+                </button>
+            </div>
+
+            {lastScreenshot && (
+                <div style={{ marginBottom: '15px' }}>
+                    <p style={{ fontSize: '14px', margin: '5px 0', color: '#666' }}>Last screenshot sent:</p>
+                    <img 
+                        src={lastScreenshot} 
+                        alt="Last screenshot" 
+                        style={{ 
+                            maxWidth: '100%', 
+                            maxHeight: '150px', 
+                            border: '1px solid #ddd',
+                            borderRadius: '5px'
+                        }} 
+                    />
+                </div>
+            )}
+
+            {error && (
+                <p style={{ color: 'red', fontSize: '14px', margin: '10px 0' }}>
+                    Error: {error}
+                </p>
+            )}
         </div>
     );
 };

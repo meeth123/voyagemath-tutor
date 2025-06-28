@@ -33,7 +33,7 @@ wss.on('connection', async (ws) => {
     },
     systemInstruction: {
       parts: [{
-        text: 'You are Voyage AI Tutor, a helpful and encouraging math tutor. Your role is to help students learn math concepts through conversation. Be patient, supportive, and guide students to discover answers rather than just giving them. Ask follow-up questions to check understanding and provide hints when needed. Keep responses concise and conversational since this is a voice-based interaction.'
+        text: 'You are Voyage AI Tutor, a helpful and encouraging math tutor. Your role is to help students learn math concepts through conversation. Be patient, supportive, and guide students to discover answers rather than just giving them. Ask follow-up questions to check understanding and provide hints when needed. Keep responses concise and conversational since this is a voice-based interaction. When you receive screenshots, analyze them carefully to understand what the student is working on and provide specific, contextual help based on what you can see in the image.'
       }]
     }
   };
@@ -95,32 +95,65 @@ wss.on('connection', async (ws) => {
 
   ws.on('message', async (message) => {
     try {
-      console.log('🎤 Received message from client, size:', message.length);
+      const messageStr = message.toString();
       
-      // Decode base64 audio data
-      const base64Data = message.toString();
-      console.log('📤 First 100 chars of base64 data:', base64Data.substring(0, 100));
-      
+      // Try to parse as JSON (new format with type)
+      let parsedMessage;
+      try {
+        parsedMessage = JSON.parse(messageStr);
+      } catch (jsonError) {
+        // Fallback to old format (raw base64 audio)
+        parsedMessage = {
+          type: 'audio',
+          data: messageStr
+        };
+      }
+
+      console.log('🎤 Received message from client, type:', parsedMessage.type);
+
       if (session) {
-        console.log('🎵 Sending audio to Gemini via sendRealtimeInput...');
-        
-        try {
-          // Use sendRealtimeInput for audio data with PCM format as required
-          await session.sendRealtimeInput({
-            audio: {
-              data: base64Data,
-              mimeType: 'audio/pcm;rate=16000'
-            }
-          });
-          console.log('✅ Audio sent to Gemini successfully');
-        } catch (error) {
-          console.error('❌ Error sending audio to Gemini:', error);
+        if (parsedMessage.type === 'audio') {
+          // Handle audio data
+          const base64Data = parsedMessage.data;
+          console.log('📤 Sending audio to Gemini, length:', base64Data.length);
+          
+          try {
+            await session.sendRealtimeInput({
+              audio: {
+                data: base64Data,
+                mimeType: 'audio/pcm;rate=16000'
+              }
+            });
+            console.log('✅ Audio sent to Gemini successfully');
+          } catch (error) {
+            console.error('❌ Error sending audio to Gemini:', error);
+          }
+
+        } else if (parsedMessage.type === 'screenshot') {
+          // Handle screenshot data
+          const imageBase64 = parsedMessage.data;
+          const mimeType = parsedMessage.mimeType || 'image/png';
+          
+          console.log('📷 Sending screenshot to Gemini, length:', imageBase64.length);
+          console.log('📷 Image mime type:', mimeType);
+          
+          try {
+            await session.sendRealtimeInput({
+              image: {
+                data: imageBase64,
+                mimeType: mimeType
+              }
+            });
+            console.log('✅ Screenshot sent to Gemini successfully');
+          } catch (error) {
+            console.error('❌ Error sending screenshot to Gemini:', error);
+          }
         }
       } else {
-        console.log('❌ No session available to send audio');
+        console.log('❌ No session available to send data');
       }
     } catch (e) {
-      console.error('❌ Error processing audio message:', e);
+      console.error('❌ Error processing message:', e);
     }
   });
 
