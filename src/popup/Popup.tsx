@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Chrome extension API type declaration
+declare const chrome: {
+    runtime: {
+        getURL: (path: string) => string;
+    };
+};
+
 const Popup = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -140,7 +147,10 @@ const Popup = () => {
             // Try to use AudioWorklet first (modern approach)
             try {
                 console.log('Loading AudioWorklet processor...');
-                await audioContext.audioWorklet.addModule('/audio-processor.js');
+                
+                // Use Chrome extension URL to load the audio processor
+                const audioProcessorUrl = chrome.runtime.getURL('audio-processor.js');
+                await audioContext.audioWorklet.addModule(audioProcessorUrl);
                 
                 const workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor');
                 
