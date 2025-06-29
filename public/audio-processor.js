@@ -1,84 +1,82 @@
-// AudioWorklet processor for real-time audio capture
+// AudioWorklet processor for real-time audio capture with robust VAD
 // This runs in a separate thread from the main UI thread
 
 class AudioCaptureProcessor extends AudioWorkletProcessor {
     constructor(options) {
         super();
         
-        // VAD (Voice Activity Detection) parameters
-        this.speechThreshold = options.processorOptions?.speechThreshold || 0.02;
-        this.silenceDelay = options.processorOptions?.silenceDelay || 1000; // 1 second
+        // VAD Parameters
+        this.speechThreshold = options.processorOptions?.speechThreshold || 0.015;
         
-        // VAD state
+        // We will require roughly 1 second of silence.
+        // The browser gives us audio in 128-sample frames. At a 16000Hz sample rate,
+        // 1 second of audio is 16000 samples.
+        // 16000 samples / 128 samples/frame = 125 frames.
+        // We'll use a slightly lower number to be safe.
+        this.requiredSilenceFrames = options.processorOptions?.silenceFrames || 70;
+
+        // VAD State
         this.isSpeaking = false;
-        this.silenceTimer = null;
-        this.consecutiveSilenceFrames = 0;
-        this.silenceFramesThreshold = Math.floor(this.silenceDelay / (128 / 16000 * 1000)); // Convert ms to frames
-        
-        console.log('AudioWorklet VAD initialized with threshold:', this.speechThreshold, 'silence delay:', this.silenceDelay + 'ms');
-        
+        this.isPaused = false;
+        this.silentFrameCount = 0;
+
+        console.log('🎙️ Robust VAD initialized - threshold:', this.speechThreshold, 'silence frames:', this.requiredSilenceFrames);
+
         this.port.onmessage = (event) => {
-            // Handle messages from main thread if needed (e.g., threshold updates)
-            if (event.data.type === 'updateThreshold') {
-                this.speechThreshold = event.data.threshold;
-                console.log('VAD threshold updated to:', this.speechThreshold);
+            if (event.data.type === 'pause') {
+                this.isPaused = true;
+                console.log('🎙️ VAD paused (AI speaking)');
+            } else if (event.data.type === 'resume') {
+                this.isPaused = false;
+                console.log('🎙️ VAD resumed (AI finished)');
             }
         };
     }
 
-    process(inputs, outputs, parameters) {
+    process(inputs) {
+        if (this.isPaused) {
+            return true; // If paused (AI is talking), do nothing.
+        }
+
         const input = inputs[0];
-        
         if (input.length > 0) {
-            const inputData = input[0]; // First channel
-            
-            // Calculate RMS (Root Mean Square) for voice activity detection
+            const inputData = input[0];
+
+            // Calculate volume (RMS)
             let sum = 0.0;
             for (let i = 0; i < inputData.length; i++) {
                 sum += inputData[i] * inputData[i];
             }
             const rms = Math.sqrt(sum / inputData.length);
-            
+
             if (rms > this.speechThreshold) {
-                // --- SPEECH DETECTED ---
+                // --- Speech Frame Detected ---
+                this.silentFrameCount = 0; // Reset silence counter
                 if (!this.isSpeaking) {
                     this.isSpeaking = true;
-                    this.consecutiveSilenceFrames = 0;
                     console.log('🎤 Speech started (RMS:', rms.toFixed(4), ')');
                     this.port.postMessage({ type: 'speechStart' });
                 }
-                
-                // Reset silence counter
-                this.consecutiveSilenceFrames = 0;
-                
-                // Send audio data to main thread
-                this.port.postMessage({ 
-                    type: 'audioData', 
-                    data: inputData.slice() // Copy the array
-                });
-                
-            } else if (this.isSpeaking) {
-                // --- SILENCE DETECTED DURING SPEECH ---
-                this.consecutiveSilenceFrames++;
-                
-                // Continue sending audio data even during brief silence
-                this.port.postMessage({ 
-                    type: 'audioData', 
-                    data: inputData.slice()
-                });
-                
-                // Check if silence has lasted long enough to end speech
-                if (this.consecutiveSilenceFrames >= this.silenceFramesThreshold) {
-                    this.isSpeaking = false;
-                    this.consecutiveSilenceFrames = 0;
-                    console.log('🔇 Speech ended after', this.silenceDelay + 'ms silence');
-                    this.port.postMessage({ type: 'speechEnd' });
+                this.port.postMessage({ type: 'audioData', data: inputData.slice() });
+            } else {
+                // --- Silence Frame Detected ---
+                if (this.isSpeaking) {
+                    this.silentFrameCount++;
+                    
+                    // Continue sending audio data during silence (for complete capture)
+                    this.port.postMessage({ type: 'audioData', data: inputData.slice() });
+                    
+                    if (this.silentFrameCount >= this.requiredSilenceFrames) {
+                        // --- Utterance has ended ---
+                        this.isSpeaking = false;
+                        console.log('🔇 Speech ended after', this.silentFrameCount, 'silent frames');
+                        this.port.postMessage({ type: 'speechEnd' });
+                        this.silentFrameCount = 0;
+                    }
                 }
             }
-            // If not speaking and no speech detected, do nothing (don't send audio)
         }
-        
-        return true; // Keep processor alive
+        return true;
     }
 }
 
