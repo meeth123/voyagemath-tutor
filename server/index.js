@@ -261,15 +261,33 @@ async function speakText(text, ws) {
           }
         },
         
+        onopen: () => {
+          console.log('✅ TTS session opened');
+        },
+        
         onerror: (error) => {
           console.error('❌ TTS session error:', error);
+        },
+        
+        onclose: () => {
+          console.log('🔌 TTS session closed');
         }
       }
     });
     
-    await ttsSession.sendRealtimeInput({
-      text: text
+    // Wait for the session to be fully open before sending text
+    await new Promise((resolve) => {
+      const checkConnection = setInterval(() => {
+        if (ttsSession.state === 'open') {
+          clearInterval(checkConnection);
+          resolve();
+        }
+      }, 100);
     });
+
+    console.log('📤 Sending text to audio model for TTS...');
+    // Use sendText method for text-to-speech with the native-audio-dialog model
+    await ttsSession.sendText(text);
     
   } catch (error) {
     console.error('❌ Error in text-to-speech:', error);
