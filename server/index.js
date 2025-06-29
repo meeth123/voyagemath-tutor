@@ -33,19 +33,25 @@ const AUDIO_MODEL_CONFIG = {
     },
     systemInstruction: {
       parts: [{
-        text: `You are Voyage AI Tutor, a helpful and encouraging math tutor. 
-
-IMPORTANT: You have a special tool available called "get_screenshot_analysis". 
-
-If the user asks you to look at something on their screen, analyze an image, help with a specific problem they're showing you, or mentions "this" referring to visual content, you MUST respond with ONLY a JSON object in this exact format:
-
-{"tool_use": "get_screenshot_analysis", "question_for_vision_model": "Describe what you see and help with the specific question"}
-
-Do NOT say anything else when using the tool - just return the JSON.
-
-For all other conversational interactions, respond normally as a friendly, encouraging math tutor using your voice.`
+        text: `You are Voyage AI Tutor, a helpful and encouraging math tutor.`
       }]
     }
+  }
+};
+
+// Simplified config for testing connection issues
+const SIMPLE_AUDIO_CONFIG = {
+  model: 'models/gemini-2.5-flash-preview-native-audio-dialog',
+  config: {
+    responseModalities: [Modality.AUDIO],
+    speechConfig: { 
+      voiceConfig: { 
+        prebuiltVoiceConfig: { 
+          voiceName: 'Zephyr' 
+        } 
+      } 
+    }
+    // No system instruction to test if that's the issue
   }
 };
 
@@ -68,11 +74,28 @@ wss.on('connection', (ws) => {
   let turnAudioBuffer = [];
   let turnImage = null;
   let currentAudioSession = null;
+  let audioMessageCount = 0;
+  
+  // Periodic logging to track what's happening
+  const statusInterval = setInterval(() => {
+    console.log(`📊 Status: ${audioMessageCount} audio messages received, buffer size: ${turnAudioBuffer.length}`);
+    audioMessageCount = 0; // Reset counter
+  }, 5000); // Every 5 seconds
 
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message.toString());
       console.log('📨 Received message type:', data.type);
+      
+      // Add detailed logging for debugging
+      if (data.type !== 'audio') {
+        console.log('🔍 Non-audio message details:', {
+          type: data.type,
+          hasPayload: !!data.payload,
+          payloadLength: data.payload ? data.payload.length : 0,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       if (data.type === 'image') {
         console.log('📷 Received and stored screenshot for this turn');
@@ -82,6 +105,7 @@ wss.on('connection', (ws) => {
       
       if (data.type === 'audio') {
         turnAudioBuffer.push(data.payload);
+        audioMessageCount++;
         return;
       }
       
@@ -100,9 +124,13 @@ wss.on('connection', (ws) => {
 
         // --- Agentic Flow: Step 1 - Initial call to the Audio Model ---
         try {
-          currentAudioSession = await genAI.live.connect({
-            model: AUDIO_MODEL_CONFIG.model,
-            config: AUDIO_MODEL_CONFIG.config,
+          // Test with simplified config first to isolate the issue
+          console.log('🔍 Testing connection with simplified config...');
+          
+          // Add timeout to prevent hanging
+          const connectionPromise = genAI.live.connect({
+            model: SIMPLE_AUDIO_CONFIG.model,
+            config: SIMPLE_AUDIO_CONFIG.config,
             callbacks: {
               onopen: () => {
                 console.log('✅ Audio model session opened');
@@ -116,96 +144,30 @@ wss.on('connection', (ws) => {
                 console.log('🔌 Audio model session closed');
               },
 
-              onmessage: async (response) => {
+              onmessage: (response) => {
                 console.log('📥 Audio model response received');
+                console.log('🔍 Response structure:', JSON.stringify(response, null, 2));
                 
-                if (response.serverContent?.modelTurn?.parts) {
-                  const part = response.serverContent.modelTurn.parts[0];
-                  
-                  // Intercept a "tool use" request from the AI
-                  if (part.text) {
-                    console.log('💬 Audio model text response:', part.text);
-                    
-                    try {
-                      const toolCall = JSON.parse(part.text);
-                      if (toolCall.tool_use === 'get_screenshot_analysis') {
-                        console.log('🔧 Audio model requested screenshot analysis');
-                        
-                        // Close the audio session since we're switching to vision
-                        if (currentAudioSession) {
-                          currentAudioSession.close();
-                          currentAudioSession = null;
-                        }
-
-                        // --- Agentic Flow: Step 2 - Call the Vision Model ---
-                        if (!turnImage) {
-                          console.log('❌ No screenshot available for analysis');
-                          await speakText("You asked me to look at the screen, but I don't have a screenshot. Please share one first by clicking the screenshot button.", ws);
-                          return;
-                        }
-                        
-                        console.log('👁️ Calling vision model for analysis...');
-                        const visionModel = genAI.getGenerativeModel(VISION_MODEL_CONFIG);
-                        
-                        const visionPrompt = [
-                          {
-                            text: `You are a math tutor analyzing a screenshot. The user's question/context is: "${toolCall.question_for_vision_model}". 
-
-Please provide a detailed analysis of what you see in the image, focusing on any math problems, equations, diagrams, or educational content. Be specific about numbers, operations, and mathematical concepts you observe.
-
-Your response will be read aloud to the user, so write in a conversational, helpful tone as if you're speaking directly to them.`
-                          },
-                          { 
-                            inlineData: {
-                              mimeType: turnImage.mimeType,
-                              data: turnImage.data
-                            }
-                          }
-                        ];
-                        
-                        try {
-                          const result = await visionModel.generateContent(visionPrompt);
-                          const analysisText = await result.response.text();
-                          console.log('👁️ Vision model analysis completed');
-                          console.log('📝 Analysis:', analysisText.substring(0, 200) + '...');
-
-                          // --- Agentic Flow: Step 3 - Speak the analysis ---
-                          await speakText(analysisText, ws);
-                          
-                          turnImage = null; // Clear image after use
-                          return;
-                          
-                        } catch (visionError) {
-                          console.error('❌ Vision model error:', visionError);
-                          await speakText("I'm having trouble analyzing the screenshot right now. Could you try taking another screenshot or describe what you're seeing?", ws);
-                          return;
-                        }
-                      }
-                    } catch (parseError) {
-                      // Not a valid JSON tool call - treat as regular text response
-                      console.log('💬 Regular text response, converting to speech');
-                      await speakText(part.text, ws);
-                      return;
-                    }
+                // Handle the response asynchronously but don't block the callback
+                setImmediate(async () => {
+                  try {
+                    await handleAudioModelResponse(response, ws, turnImage);
+                  } catch (error) {
+                    console.error('❌ Error handling audio model response:', error);
                   }
-                  
-                  // If it's a standard audio response, stream it back to the client
-                  if (part.inlineData) {
-                    console.log('🔊 Streaming audio response to client');
-                    ws.send(JSON.stringify({ 
-                      type: 'audio', 
-                      payload: part.inlineData.data 
-                    }));
-                  }
-                }
-                
-                if (response.serverContent?.turnComplete) {
-                  console.log('✅ Audio model turn complete');
-                  ws.send(JSON.stringify({ type: 'turn_complete' }));
-                }
+                });
               }
             }
           });
+
+          // Add 10 second timeout to prevent hanging
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000);
+          });
+
+          console.log('⏱️ Attempting connection with 10s timeout...');
+          currentAudioSession = await Promise.race([connectionPromise, timeoutPromise]);
+          console.log('✅ Connection successful! Session state:', currentAudioSession.state);
           
           // Send the audio data to the model
           console.log('📤 Sending audio to model, length:', combinedAudioData.length);
@@ -218,7 +180,26 @@ Your response will be read aloud to the user, so write in a conversational, help
           
         } catch (error) {
           console.error('❌ Error in agentic flow:', error);
-          await speakText("I'm having some technical difficulties. Please try again.", ws);
+          console.error('🔍 Error details:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack?.substring(0, 500)
+          });
+          
+          // Provide specific error messages based on the type of error
+          let errorMessage = "I'm having some technical difficulties. Please try again.";
+          if (error.message.includes('timeout')) {
+            errorMessage = "The connection is taking too long. This might be a temporary issue with the AI service.";
+            console.log('🔍 DIAGNOSIS: Connection timeout - likely API rate limiting or model unavailability');
+          } else if (error.message.includes('quota') || error.message.includes('rate')) {
+            errorMessage = "The AI service is currently busy. Please wait a moment and try again.";
+            console.log('🔍 DIAGNOSIS: Quota or rate limiting issue');
+          } else if (error.message.includes('model')) {
+            errorMessage = "There's an issue with the AI model. This might be a temporary service problem.";
+            console.log('🔍 DIAGNOSIS: Model-specific error - possibly model unavailability');
+          }
+          
+          await speakText(errorMessage, ws);
         }
       }
     } catch (e) {
@@ -228,12 +209,99 @@ Your response will be read aloud to the user, so write in a conversational, help
 
   ws.on('close', () => {
     console.log('🔌 Client disconnected');
+    clearInterval(statusInterval);
     if (currentAudioSession) {
       currentAudioSession.close();
       currentAudioSession = null;
     }
   });
 });
+
+/**
+ * Handle audio model responses asynchronously to avoid blocking the callback
+ */
+async function handleAudioModelResponse(response, ws, turnImage) {
+  if (response.serverContent?.modelTurn?.parts) {
+    const part = response.serverContent.modelTurn.parts[0];
+    
+    // Intercept a "tool use" request from the AI
+    if (part.text) {
+      console.log('💬 Audio model text response:', part.text);
+      
+      try {
+        const toolCall = JSON.parse(part.text);
+        if (toolCall.tool_use === 'get_screenshot_analysis') {
+          console.log('🔧 Audio model requested screenshot analysis');
+          
+          // Note: We'll let the session close naturally after the tool call
+
+          // --- Agentic Flow: Step 2 - Call the Vision Model ---
+          if (!turnImage) {
+            console.log('❌ No screenshot available for analysis');
+            await speakText("You asked me to look at the screen, but I don't have a screenshot. Please share one first by clicking the screenshot button.", ws);
+            return;
+          }
+          
+          console.log('👁️ Calling vision model for analysis...');
+          const visionModel = genAI.getGenerativeModel(VISION_MODEL_CONFIG);
+          
+          const visionPrompt = [
+            {
+              text: `You are a math tutor analyzing a screenshot. The user's question/context is: "${toolCall.question_for_vision_model}". 
+
+Please provide a detailed analysis of what you see in the image, focusing on any math problems, equations, diagrams, or educational content. Be specific about numbers, operations, and mathematical concepts you observe.
+
+Your response will be read aloud to the user, so write in a conversational, helpful tone as if you're speaking directly to them.`
+            },
+            { 
+              inlineData: {
+                mimeType: turnImage.mimeType,
+                data: turnImage.data
+              }
+            }
+          ];
+          
+          try {
+            const result = await visionModel.generateContent(visionPrompt);
+            const analysisText = await result.response.text();
+            console.log('👁️ Vision model analysis completed');
+            console.log('📝 Analysis:', analysisText.substring(0, 200) + '...');
+
+            // --- Agentic Flow: Step 3 - Speak the analysis ---
+            await speakText(analysisText, ws);
+            
+            turnImage = null; // Clear image after use
+            return;
+            
+          } catch (visionError) {
+            console.error('❌ Vision model error:', visionError);
+            await speakText("I'm having trouble analyzing the screenshot right now. Could you try taking another screenshot or describe what you're seeing?", ws);
+            return;
+          }
+        }
+      } catch (parseError) {
+        // Not a valid JSON tool call - treat as regular text response
+        console.log('💬 Regular text response, converting to speech');
+        await speakText(part.text, ws);
+        return;
+      }
+    }
+    
+    // If it's a standard audio response, stream it back to the client
+    if (part.inlineData) {
+      console.log('🔊 Streaming audio response to client');
+      ws.send(JSON.stringify({ 
+        type: 'audio', 
+        payload: part.inlineData.data 
+      }));
+    }
+  }
+  
+  if (response.serverContent?.turnComplete) {
+    console.log('✅ Audio model turn complete');
+    ws.send(JSON.stringify({ type: 'turn_complete' }));
+  }
+}
 
 /**
  * A robust helper function to have the audio model speak a given text (Text-to-Speech).
