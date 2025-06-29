@@ -291,7 +291,7 @@ const Popup = () => {
                         const workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor', {
                             processorOptions: {
                                 speechThreshold: 0.015,  // Lowered threshold to catch quieter speech
-                                silenceFrames: 70        // ~1 second of silence (70 frames * 128 samples/frame / 16000 Hz)
+                                silenceFrames: 188       // ~1.5 seconds of silence (188 frames * 128 samples/frame / 16000 Hz)
                             }
                         });
                         

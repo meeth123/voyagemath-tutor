@@ -8,12 +8,11 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
         // VAD Parameters
         this.speechThreshold = options.processorOptions?.speechThreshold || 0.015;
         
-        // We will require roughly 1 second of silence.
-        // The browser gives us audio in 128-sample frames. At a 16000Hz sample rate,
-        // 1 second of audio is 16000 samples.
-        // 16000 samples / 128 samples/frame = 125 frames.
-        // We'll use a slightly lower number to be safe.
-        this.requiredSilenceFrames = options.processorOptions?.silenceFrames || 70;
+            // We will require roughly 1.5 seconds of silence for natural speech pauses.
+    // The browser gives us audio in 128-sample frames. At a 16000Hz sample rate,
+    // 1.5 seconds of audio is 24000 samples.
+    // 24000 samples / 128 samples/frame = 187.5 frames ≈ 188 frames.
+    this.requiredSilenceFrames = options.processorOptions?.silenceFrames || 188;
 
         // VAD State
         this.isSpeaking = false;
