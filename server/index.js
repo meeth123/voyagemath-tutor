@@ -236,16 +236,20 @@ Your response will be read aloud to the user, so write in a conversational, help
 });
 
 /**
- * Helper function to convert text to speech using the audio model
+ * A robust helper function to have the audio model speak a given text (Text-to-Speech).
+ * It now waits for the session to be fully open before sending the text prompt.
  */
 async function speakText(text, ws) {
-  console.log(`🗣️ Converting text to speech: "${text.substring(0, 100)}..."`);
-  
+  console.log(`🤖 AI Speaking: "${text}"`);
   try {
     const ttsSession = await genAI.live.connect({
       model: AUDIO_MODEL_CONFIG.model,
       config: AUDIO_MODEL_CONFIG.config,
       callbacks: {
+        onopen: () => {
+          console.log('✅ TTS session opened');
+        },
+        
         onmessage: (response) => {
           if (response.serverContent?.modelTurn?.parts?.[0]?.inlineData) {
             console.log('🔊 Sending TTS audio to client');
@@ -261,12 +265,9 @@ async function speakText(text, ws) {
           }
         },
         
-        onopen: () => {
-          console.log('✅ TTS session opened');
-        },
-        
         onerror: (error) => {
           console.error('❌ TTS session error:', error);
+          ttsSession.close();
         },
         
         onclose: () => {
@@ -274,23 +275,26 @@ async function speakText(text, ws) {
         }
       }
     });
-    
-    // Wait for the session to be fully open before sending text
-    await new Promise((resolve) => {
-      const checkConnection = setInterval(() => {
+
+    // This promise will only resolve once the session's state is 'open'
+    await new Promise((resolve, reject) => {
+      const checkInterval = setInterval(() => {
         if (ttsSession.state === 'open') {
-          clearInterval(checkConnection);
+          clearInterval(checkInterval);
           resolve();
+        } else if (ttsSession.state === 'closed' || ttsSession.state === 'error') {
+          clearInterval(checkInterval);
+          reject(new Error(`TTS Session failed to open. State: ${ttsSession.state}`));
         }
-      }, 100);
+      }, 50); // Check every 50ms
     });
 
     console.log('📤 Sending text to audio model for TTS...');
-    // Use sendText method for text-to-speech with the native-audio-dialog model
+    // Now that we know the session is open, it's safe to send the text
     await ttsSession.sendText(text);
-    
-  } catch (error) {
-    console.error('❌ Error in text-to-speech:', error);
+
+  } catch (e) {
+      console.error('❌ Error in speakText function:', e);
   }
 }
 

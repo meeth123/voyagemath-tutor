@@ -290,8 +290,8 @@ const Popup = () => {
                         // Create AudioWorkletNode with VAD parameters
                         const workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor', {
                             processorOptions: {
-                                speechThreshold: 0.02,  // Adjust based on testing
-                                silenceDelay: 1000      // 1 second of silence to end speech
+                                speechThreshold: 0.015,  // Lowered threshold to catch quieter speech
+                                silenceDelay: 1500       // Increased delay to 1.5 seconds for more natural pausing
                             }
                         });
                         
