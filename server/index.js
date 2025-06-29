@@ -33,7 +33,23 @@ const AUDIO_MODEL_CONFIG = {
     },
     systemInstruction: {
       parts: [{
-        text: `You are Voyage AI Tutor, a helpful and encouraging math tutor.`
+        text: `You are Voyage AI Tutor, a helpful and encouraging math tutor. Your role is to:
+
+1. Listen to students' math questions and provide clear, step-by-step explanations
+2. Encourage students when they're struggling and celebrate their progress
+3. Break down complex problems into manageable steps
+4. Ask clarifying questions if you need more information
+5. Use simple, conversational language that's easy to understand
+6. Be patient and supportive, adapting your teaching style to each student's needs
+
+When a student asks a question:
+- Listen carefully to their full question
+- Provide a clear, helpful response
+- Explain your reasoning step-by-step
+- Encourage them to ask follow-up questions
+- If they mention looking at something on screen, you can request a screenshot by responding with JSON: {"tool_use": "get_screenshot_analysis", "question_for_vision_model": "their question here"}
+
+Always respond in a warm, encouraging tone as if you're speaking directly to the student. Remember, your goal is to help them learn and build confidence in mathematics.`
       }]
     }
   }
@@ -75,6 +91,7 @@ wss.on('connection', (ws) => {
   let turnImage = null;
   let currentAudioSession = null;
   let audioMessageCount = 0;
+  let hasReceivedResponse = false;
   
   // Periodic logging to track what's happening
   const statusInterval = setInterval(() => {
@@ -117,8 +134,41 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        const combinedAudioData = turnAudioBuffer.join('');
+        // Fix: Properly combine binary audio data instead of concatenating Base64 strings
+        console.log('🔧 Converting Base64 chunks to binary and combining...');
+        let combinedAudioData;
+        let combinedBinaryData;
+        try {
+          const binaryChunks = turnAudioBuffer.map(base64Chunk => {
+            return Buffer.from(base64Chunk, 'base64');
+          });
+          combinedBinaryData = Buffer.concat(binaryChunks);
+          combinedAudioData = combinedBinaryData.toString('base64');
+          
+          console.log('📊 Audio processing stats:', {
+            originalChunks: turnAudioBuffer.length,
+            totalBinaryBytes: combinedBinaryData.length,
+            finalBase64Length: combinedAudioData.length,
+            avgChunkSize: Math.round(combinedBinaryData.length / turnAudioBuffer.length)
+          });
+          
+          // Validate audio data
+          if (combinedBinaryData.length === 0) {
+            console.error('❌ No audio data after combining chunks');
+            return;
+          }
+          
+          if (combinedBinaryData.length < 1000) {
+            console.warn('⚠️ Audio data seems very short:', combinedBinaryData.length, 'bytes');
+          }
+        
+        } catch (audioError) {
+          console.error('❌ Error processing audio data:', audioError);
+          return;
+        }
+        
         turnAudioBuffer = []; // Clear buffer for next turn
+        hasReceivedResponse = false; // Reset response flag for this turn
         
         console.log('🤖 Connecting to audio model...');
 
@@ -129,8 +179,8 @@ wss.on('connection', (ws) => {
           
           // Add timeout to prevent hanging
           const connectionPromise = genAI.live.connect({
-            model: SIMPLE_AUDIO_CONFIG.model,
-            config: SIMPLE_AUDIO_CONFIG.config,
+            model: AUDIO_MODEL_CONFIG.model,
+            config: AUDIO_MODEL_CONFIG.config,
             callbacks: {
               onopen: () => {
                 console.log('✅ Audio model session opened');
@@ -145,8 +195,16 @@ wss.on('connection', (ws) => {
               },
 
               onmessage: (response) => {
+                hasReceivedResponse = true;
                 console.log('📥 Audio model response received');
                 console.log('🔍 Response structure:', JSON.stringify(response, null, 2));
+                
+                // Check if this is just an acknowledgment or actual content
+                if (response.serverContent) {
+                  console.log('✅ Received server content from model');
+                } else {
+                  console.log('ℹ️ Received non-content message from model');
+                }
                 
                 // Handle the response asynchronously but don't block the callback
                 setImmediate(async () => {
@@ -171,12 +229,44 @@ wss.on('connection', (ws) => {
           
           // Send the audio data to the model
           console.log('📤 Sending audio to model, length:', combinedAudioData.length);
+          
+          // Log more details about the audio data for debugging
+          const audioSizeKB = (combinedBinaryData.length / 1024).toFixed(1);
+          const durationEstimate = (combinedBinaryData.length / (16000 * 2)).toFixed(1); // 16kHz, 16-bit
+          console.log('🎵 Audio details:', {
+            sizeKB: audioSizeKB,
+            estimatedDurationSec: durationEstimate,
+            bytesPerSample: 2,
+            expectedSampleRate: 16000
+          });
+          
           await currentAudioSession.sendRealtimeInput({
             audio: {
               data: combinedAudioData,
               mimeType: 'audio/pcm;rate=16000'
             }
           });
+          
+          // Send audio stream end signal to indicate we're done sending audio
+          console.log('🔚 Sending audio stream end signal...');
+          await currentAudioSession.sendRealtimeInput({
+            audioStreamEnd: true
+          });
+          
+          // Wait for the model to process and respond
+          console.log('⏳ Waiting for model response...');
+          
+          // Set up a timeout to prevent infinite waiting
+          setTimeout(() => {
+            if (currentAudioSession && currentAudioSession.state !== 'closed') {
+              if (!hasReceivedResponse) {
+                console.log('⏰ Response timeout - model has not responded at all');
+                console.log('🔍 This suggests the audio data may not be in the correct format or the model is not processing it');
+              } else {
+                console.log('⏰ Response timeout - model responded but may still be processing');
+              }
+            }
+          }, 15000); // 15 second timeout
           
         } catch (error) {
           console.error('❌ Error in agentic flow:', error);

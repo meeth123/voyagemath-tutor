@@ -28,6 +28,14 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
             } else if (event.data.type === 'resume') {
                 this.isPaused = false;
                 console.log('🎙️ VAD resumed (AI finished)');
+            } else if (event.data.type === 'forceEnd') {
+                // Manual override for testing
+                if (this.isSpeaking) {
+                    this.isSpeaking = false;
+                    console.log('🔇 Speech FORCE ENDED (manual override)');
+                    this.port.postMessage({ type: 'speechEnd' });
+                    this.silentFrameCount = 0;
+                }
             }
         };
     }
@@ -62,6 +70,11 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
                 if (this.isSpeaking) {
                     this.silentFrameCount++;
                     
+                    // Debug logging for silence detection
+                    if (this.silentFrameCount % 50 === 0) {
+                        console.log('🔇 Silence frames:', this.silentFrameCount, '/', this.requiredSilenceFrames, 'RMS:', rms.toFixed(4));
+                    }
+                    
                     // Continue sending audio data during silence (for complete capture)
                     this.port.postMessage({ type: 'audioData', data: inputData.slice() });
                     
@@ -71,6 +84,11 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
                         console.log('🔇 Speech ended after', this.silentFrameCount, 'silent frames');
                         this.port.postMessage({ type: 'speechEnd' });
                         this.silentFrameCount = 0;
+                    }
+                } else {
+                    // Debug: Show background noise levels occasionally
+                    if (Math.random() < 0.001) { // ~0.1% of frames
+                        console.log('🔇 Background RMS:', rms.toFixed(4), 'threshold:', this.speechThreshold);
                     }
                 }
             }

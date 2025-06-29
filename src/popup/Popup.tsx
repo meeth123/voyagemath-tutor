@@ -277,9 +277,12 @@ const Popup = () => {
                         console.error('❌ WebSocket error:', error);
                     };
 
-                    // Set up AudioContext and AudioWorklet
-                    const audioContext = new AudioContext({ sampleRate: 16000 });
-                    audioContextRef.current = audioContext;
+                            // Set up AudioContext and AudioWorklet
+        const audioContext = new AudioContext({ sampleRate: 16000 });
+        audioContextRef.current = audioContext;
+        
+        // Log the actual sample rate being used
+        console.log('🎵 AudioContext sample rate:', audioContext.sampleRate);
 
                     try {
                         // Load AudioWorklet processor
@@ -386,6 +389,14 @@ const Popup = () => {
         setIsAiCurrentlySpeaking(false);
         setIsUserSpeaking(false);
         setIsTutorSpeaking(false);
+    };
+
+    // Debug function to force end speech
+    const forceEndSpeech = () => {
+        console.log('🔧 Force ending speech (manual test)...');
+        if (workletNodeRef.current) {
+            workletNodeRef.current.port.postMessage({ type: 'forceEnd' });
+        }
     };
 
     return (
@@ -509,24 +520,46 @@ const Popup = () => {
                     </div>
                 )}
 
-                {/* Force resume button (emergency) */}
-                {isRecording && (isTutorSpeaking || isAiCurrentlySpeaking) && (
-                    <div style={{ marginBottom: '12px' }}>
-                        <button 
-                            onClick={forceResumeMicrophone}
-                            style={{
-                                padding: '6px 12px',
-                                backgroundColor: '#ff9800',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                fontSize: '11px',
-                                cursor: 'pointer',
-                                width: '100%'
-                            }}
-                        >
-                            🔧 Force Resume Microphone
-                        </button>
+                {/* Debug buttons */}
+                {isRecording && (
+                    <div style={{ marginBottom: '12px', display: 'flex', gap: '8px' }}>
+                        {/* Force resume button (emergency) */}
+                        {(isTutorSpeaking || isAiCurrentlySpeaking) && (
+                            <button 
+                                onClick={forceResumeMicrophone}
+                                style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: '#ff9800',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    cursor: 'pointer',
+                                    flex: 1
+                                }}
+                            >
+                                🔧 Force Resume Mic
+                            </button>
+                        )}
+                        
+                        {/* Force end speech button (debug) */}
+                        {isUserSpeaking && (
+                            <button 
+                                onClick={forceEndSpeech}
+                                style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: '#9c27b0',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    cursor: 'pointer',
+                                    flex: 1
+                                }}
+                            >
+                                🔇 Force End Speech
+                            </button>
+                        )}
                     </div>
                 )}
 
